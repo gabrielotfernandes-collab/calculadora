@@ -9,6 +9,7 @@
 :root{--bg:#f3f0ea;--card:#fff;--ink:#241a1c;--mute:#6b6266;--line:#ddd5c8;--vinho:#6b0f1a;--ouro:#ad8c2f;--creme:#fbf5eb}
 @media (prefers-color-scheme:dark){:root{--bg:#171214;--card:#221a1d;--ink:#f3ecea;--mute:#a99ea2;--line:#3a2e32;--vinho:#d9707c;--ouro:#d6b36a}}
 *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+[hidden]{display:none !important}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,"SF Pro Text","Segoe UI",Roboto,sans-serif;padding-bottom:env(safe-area-inset-bottom,0px)}
 main{max-width:794px;margin:0 auto;padding:20px 16px 48px}
@@ -158,10 +159,20 @@ details[open] summary{margin-bottom:12px}
 
 <div class="actions">
 <button type="button" class="primary" style="grid-column:1/-1" id="bZap">Enviar no WhatsApp</button>
-<button type="button" id="bPdf">Salvar PDF / imprimir</button>
+<button type="button" id="bPdf">Gerar PDF</button>
 <button type="button" id="bNovo">Novo orçamento</button>
 </div>
-<p class="hint">No iPhone, em “Salvar PDF / imprimir”, abra a prévia, use o botão de compartilhar e salve como PDF. Escolha o tamanho A4 se o aparelho perguntar.</p>
+<p class="hint">“Gerar PDF” cria o arquivo na hora, sem depender de impressão. No iPhone abre a tela de compartilhar: escolha o WhatsApp para mandar o PDF ao cliente ou “Salvar em Arquivos”.</p>
+<section class="card" id="pdfPanel" hidden>
+<h2 class="t">PDF pronto</h2>
+<div class="actions">
+<button type="button" class="primary" style="grid-column:1/-1" id="bShare" hidden>Compartilhar PDF (WhatsApp, Arquivos...)</button>
+<button type="button" id="bOpen">Abrir PDF</button>
+<button type="button" id="bDown">Baixar PDF</button>
+</div>
+<p class="hint">Se a tela de compartilhar não aparecer, use “Abrir PDF” e, no visualizador, o botão de compartilhar do aparelho.</p>
+</section>
+<button type="button" class="link" id="bPrint">Imprimir (computador)</button>
 <div class="previewhead">Prévia da folha</div>
 </div>
 
@@ -350,6 +361,121 @@ function textoZap(){
  return r.join("\n");
 }
 
+// ===== PDF gerado dentro da pagina (sem biblioteca, sem depender de imprimir) =====
+var pdfFile=null;
+function desenharTexto(ctx,node,pr,s){
+ var el=node.parentElement;if(!el||el.classList.contains("ph"))return;
+ var cs=getComputedStyle(el);
+ ctx.font=cs.fontStyle+" "+cs.fontWeight+" "+cs.fontSize+" "+cs.fontFamily;
+ ctx.fillStyle=cs.color;ctx.textBaseline="alphabetic";
+ var up=cs.textTransform==="uppercase";
+ var m=ctx.measureText("M");
+ var asc=(m.fontBoundingBoxAscent!=null)?m.fontBoundingBoxAscent:parseFloat(cs.fontSize)*0.8;
+ var txt=node.nodeValue,r=document.createRange();
+ for(var i=0;i<txt.length;){
+  var len=(txt.codePointAt(i)>0xFFFF)?2:1;
+  if(txt.charCodeAt(i+len)===0xFE0F)len++;
+  var ch=txt.substr(i,len);
+  if(ch.trim()!==""){
+   r.setStart(node,i);r.setEnd(node,i+len);
+   var rc=r.getClientRects()[0];
+   if(rc&&rc.width>0)ctx.fillText(up?ch.toUpperCase():ch,(rc.left-pr.left)/s,(rc.top-pr.top)/s+asc);
+  }
+  i+=len;
+ }
+}
+function desenharFolha(){
+ var p=$("paper"),pr=p.getBoundingClientRect(),s=pr.width/794;
+ var W=794,H=Math.ceil(pr.height/s),K=2;
+ var cv=document.createElement("canvas");cv.width=W*K;cv.height=H*K;
+ var ctx=cv.getContext("2d");ctx.scale(K,K);
+ ctx.fillStyle="#ffffff";ctx.fillRect(0,0,W,H);
+ var els=[p].concat([].slice.call(p.querySelectorAll("*")));
+ els.forEach(function(el){
+  var rc=el.getBoundingClientRect();
+  if(rc.width===0&&rc.height===0)return;
+  var cs=getComputedStyle(el);
+  var x=(rc.left-pr.left)/s,y=(rc.top-pr.top)/s,w=rc.width/s,h=rc.height/s;
+  var bg=cs.backgroundColor;
+  if(el!==p&&bg&&bg!=="rgba(0, 0, 0, 0)"&&bg!=="transparent"){ctx.fillStyle=bg;ctx.fillRect(x,y,w,h)}
+  ["Top","Right","Bottom","Left"].forEach(function(side){
+   var bw=(parseFloat(cs["border"+side+"Width"])||0);
+   if(bw>0&&cs["border"+side+"Style"]!=="none"){
+    ctx.fillStyle=cs["border"+side+"Color"];
+    if(side==="Top")ctx.fillRect(x,y,w,bw);
+    else if(side==="Bottom")ctx.fillRect(x,y+h-bw,w,bw);
+    else if(side==="Left")ctx.fillRect(x,y,bw,h);
+    else ctx.fillRect(x+w-bw,y,bw,h);
+   }
+  });
+  if(el.tagName==="IMG"&&el.complete&&el.naturalWidth){
+   if(cs.objectFit==="cover"){
+    var iw=el.naturalWidth,ih=el.naturalHeight,k=Math.max(w/iw,h/ih),sw=w/k,sh=h/k;
+    ctx.drawImage(el,(iw-sw)/2,(ih-sh)/2,sw,sh,x,y,w,h);
+   }else{ctx.drawImage(el,x,y,w,h)}
+  }
+  if(el.tagName==="LI"&&el.parentElement&&el.parentElement.id==="pEspec"){
+   ctx.save();ctx.translate(x+2+3.5,y+7+3.5);ctx.rotate(Math.PI/4);
+   ctx.fillStyle="#ad8c2f";ctx.fillRect(-3.5,-3.5,7,7);ctx.restore();
+  }
+  for(var n=el.firstChild;n;n=n.nextSibling){
+   if(n.nodeType===3&&n.nodeValue.trim()!=="")desenharTexto(ctx,n,pr,s);
+  }
+ });
+ return cv;
+}
+function str(t){var u=new Uint8Array(t.length);for(var i=0;i<t.length;i++)u[i]=t.charCodeAt(i)&255;return u}
+function montarPdf(cv){
+ var b64=atob(cv.toDataURL("image/jpeg",0.92).split(",")[1]);
+ var jb=new Uint8Array(b64.length);for(var i=0;i<b64.length;i++)jb[i]=b64.charCodeAt(i);
+ var PW=595.28,PH=841.89,w=PW,h=PW*cv.height/cv.width;
+ if(h>PH){h=PH;w=PH*cv.width/cv.height}
+ var x=(PW-w)/2,y=PH-h;
+ var parts=[],off=[],pos=0;
+ function add(u){parts.push(u);pos+=u.length}
+ function obj(n,body){off[n]=pos;add(str(n+" 0 obj\n"+body+"\nendobj\n"))}
+ add(str("%PDF-1.4\n"));
+ obj(1,"<< /Type /Catalog /Pages 2 0 R >>");
+ obj(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+ obj(3,"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "+PW+" "+PH+"] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>");
+ off[4]=pos;
+ add(str("4 0 obj\n<< /Type /XObject /Subtype /Image /Width "+cv.width+" /Height "+cv.height+" /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "+jb.length+" >>\nstream\n"));
+ add(jb);add(str("\nendstream\nendobj\n"));
+ var c="q "+w.toFixed(2)+" 0 0 "+h.toFixed(2)+" "+x.toFixed(2)+" "+y.toFixed(2)+" cm /Im0 Do Q";
+ obj(5,"<< /Length "+c.length+" >>\nstream\n"+c+"\nendstream");
+ var xr=pos,t="xref\n0 6\n0000000000 65535 f \n";
+ for(var k=1;k<=5;k++){t+=("0000000000"+off[k]).slice(-10)+" 00000 n \n"}
+ t+="trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n"+xr+"\n%%EOF";
+ add(str(t));
+ return new Blob(parts,{type:"application/pdf"});
+}
+function nomePdf(){
+ var n=String(S.f.cliente||"");
+ try{n=n.normalize("NFD").replace(/[̀-ͯ]/g,"")}catch(e){}
+ n=n.replace(/[^a-zA-Z0-9]+/g,"-").replace(/^-+|-+$/g,"");
+ return "Orcamento-"+(n||"Palazzo")+".pdf";
+}
+function podeCompartilhar(){
+ try{return !!(navigator.share&&navigator.canShare&&pdfFile&&navigator.canShare({files:[pdfFile]}))}catch(e){return false}
+}
+function mostrarPainel(){
+ $("pdfPanel").hidden=false;
+ $("bShare").hidden=!podeCompartilhar();
+ try{$("pdfPanel").scrollIntoView({behavior:"smooth",block:"center"})}catch(e){}
+}
+function gerarPdf(){
+ try{
+  var blob=montarPdf(desenharFolha());
+  try{pdfFile=new File([blob],nomePdf(),{type:"application/pdf"})}catch(e){pdfFile=blob;pdfFile.name=nomePdf()}
+ }catch(e){
+  window.alert("Não consegui gerar o PDF neste aparelho. Use o botão Imprimir ou me avise.");return;
+ }
+ var compartilha=podeCompartilhar();
+ if(compartilha){navigator.share({files:[pdfFile],title:"Orçamento Palazzo Joias"}).catch(function(){})}
+ mostrarPainel();
+}
+function urlPdf(){return URL.createObjectURL(pdfFile)}
+
 function bind(){
  ["cliente","fone","peca","sub","valor","parc","desc","data","valid","prazo","nota","garantia"].forEach(function(k){
   var e=$(k);e.value=S.f[k]||"";
@@ -361,7 +487,11 @@ function bind(){
  $("bFoto").addEventListener("click",function(){$("fotoIn").click()});
  $("fotoIn").addEventListener("change",function(){lerFoto(this.files&&this.files[0]);this.value=""});
  $("bFotoRm").addEventListener("click",function(){S.foto="";saveFoto();renderFotoUI();renderPaper()});
- $("bPdf").addEventListener("click",function(){window.print()});
+ $("bPdf").addEventListener("click",gerarPdf);
+ $("bPrint").addEventListener("click",function(){window.print()});
+ $("bShare").addEventListener("click",function(){if(pdfFile)navigator.share({files:[pdfFile],title:"Or\u00e7amento Palazzo Joias"}).catch(function(){})});
+ $("bOpen").addEventListener("click",function(){if(pdfFile)window.open(urlPdf(),"_blank")});
+ $("bDown").addEventListener("click",function(){if(!pdfFile)return;var a=document.createElement("a");a.href=urlPdf();a.download=nomePdf();document.body.appendChild(a);a.click();document.body.removeChild(a)});
  $("bZap").addEventListener("click",function(){
   var dg=String(S.f.fone||"").replace(/\D/g,"");
   if(dg.length===10||dg.length===11)dg="55"+dg;
